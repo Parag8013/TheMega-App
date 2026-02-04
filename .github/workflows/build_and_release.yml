@@ -31,7 +31,7 @@ jobs:
         run: |
           cd tools/updater
           dart pub get
-          dart compile exe bin/main.dart -o ../../build/updater.exe
+          dart compile exe bin/main.dart -o updater.exe
           
       # Build the Main App
       - name: Build Windows Release
@@ -40,7 +40,7 @@ jobs:
       # Bundle Updater with App
       - name: Copy Updater to Release Folder
         run: |
-          copy build/updater.exe build/windows/runner/Release/updater.exe
+          copy tools/updater/updater.exe build/windows/runner/Release/updater.exe
 
       # Package Release
       - name: Compress Release
