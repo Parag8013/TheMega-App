@@ -38,7 +38,7 @@ jobs:
           
       # Build the Main App
       - name: Build Windows Release
-        run: flutter build windows --release
+        run: flutter build windows --release --build-name=1.0.${{ github.run_number }}
 
       # Bundle Updater with App
       - name: Copy Updater to Release Folder
