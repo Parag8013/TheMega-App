@@ -1,0 +1,59 @@
+name: Build and Release Windows
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Windows Release
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Get Dependencies
+        run: flutter pub get
+
+      # Build the Updater Tool
+      - name: Setup Dart for Updater
+        uses: dart-lang/setup-dart@v1
+        
+      - name: Build Updater Tool
+        run: |
+          cd tools/updater
+          dart pub get
+          dart compile exe bin/main.dart -o ../../build/updater.exe
+          
+      # Build the Main App
+      - name: Build Windows Release
+        run: flutter build windows --release
+
+      # Bundle Updater with App
+      - name: Copy Updater to Release Folder
+        run: |
+          copy build/updater.exe build/windows/runner/Release/updater.exe
+
+      # Package Release
+      - name: Compress Release
+        run: |
+          Compress-Archive -Path build/windows/runner/Release/* -DestinationPath windows_release.zip
+
+      # Create Release
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main'
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: Release v1.0.${{ github.run_number }}
+          files: windows_release.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
