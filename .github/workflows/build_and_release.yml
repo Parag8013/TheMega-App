@@ -40,12 +40,12 @@ jobs:
       # Bundle Updater with App
       - name: Copy Updater to Release Folder
         run: |
-          copy tools/updater/updater.exe build/windows/runner/Release/updater.exe
+          copy tools/updater/updater.exe build/windows/x64/runner/Release/updater.exe
 
       # Package Release
       - name: Compress Release
         run: |
-          Compress-Archive -Path build/windows/runner/Release/* -DestinationPath windows_release.zip
+          Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath windows_release.zip
 
       # Create Release
       - name: Create GitHub Release
