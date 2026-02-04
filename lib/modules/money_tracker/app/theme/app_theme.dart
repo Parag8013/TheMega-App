@@ -65,7 +65,7 @@ class AppTheme {
         ),
         hintStyle: const TextStyle(color: Colors.grey),
       ),
-      bottomAppBarTheme: const BottomAppBarTheme(
+      bottomAppBarTheme: const BottomAppBarThemeData(
         color: surfaceColor,
         elevation: 8,
       ),
