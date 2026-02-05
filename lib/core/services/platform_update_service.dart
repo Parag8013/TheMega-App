@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:http/io_client.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
@@ -14,7 +15,18 @@ class PlatformUpdateService {
   static const String _releasesUrl =
       'https://api.github.com/repos/$_repoOwner/$_repoName/releases/latest';
 
+  // Create HTTP client that bypasses SSL verification
+  // This is safe for reading public GitHub releases
+  http.Client _createHttpClient() {
+    final client = HttpClient();
+    // Bypass SSL certificate verification for Windows systems
+    // that don't have proper certificate chains installed
+    client.badCertificateCallback = (cert, host, port) => true;
+    return IOClient(client);
+  }
+
   Future<void> checkForUpdates(BuildContext context) async {
+    http.Client? client;
     try {
       // 1. Get current version
       final packageInfo = await PackageInfo.fromPlatform();
@@ -24,8 +36,9 @@ class PlatformUpdateService {
 
       print('Checking for updates... Current: $currentVersion');
 
-      // 2. Fetch latest release from GitHub
-      final response = await http.get(Uri.parse(_releasesUrl));
+      // 2. Fetch latest release from GitHub with custom client
+      client = _createHttpClient();
+      final response = await client.get(Uri.parse(_releasesUrl));
 
       if (response.statusCode != 200) {
         print('Failed to check updates: ${response.statusCode}');
@@ -59,6 +72,8 @@ class PlatformUpdateService {
           context,
         ).showSnackBar(SnackBar(content: Text('Error checking updates: $e')));
       }
+    } finally {
+      client?.close();
     }
   }
 

@@ -6,7 +6,10 @@ import '../../providers/debt_receivables_provider.dart';
 import '../../../settings/providers/category_provider.dart';
 import '../../../accounts/providers/account_provider.dart';
 import '../../../../core/models/debt_receivable_model.dart';
+import '../../../../core/models/transaction_model.dart';
+import '../../../../core/models/account_model.dart';
 import '../../../../core/utils/currency_formatter.dart';
+import '../../../transactions/providers/transaction_provider.dart';
 
 class AddDebtReceivableScreen extends StatefulWidget {
   const AddDebtReceivableScreen({Key? key}) : super(key: key);
@@ -25,6 +28,7 @@ class _AddDebtReceivableScreenState extends State<AddDebtReceivableScreen> {
   bool _hasDecimalPoint = false;
   DateTime _selectedDate = DateTime.now();
   String? _selectedCategory;
+  Account? _selectedAccount; // For receivables: which account money came from
 
   @override
   void dispose() {
@@ -145,6 +149,17 @@ class _AddDebtReceivableScreenState extends State<AddDebtReceivableScreen> {
       return;
     }
 
+    // For receivables, account selection is required
+    if (_type == 'receivable' && _selectedAccount == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please select an account (where money came from)'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
     // Show loading indicator
     showDialog(
       context: context,
@@ -154,6 +169,39 @@ class _AddDebtReceivableScreenState extends State<AddDebtReceivableScreen> {
     );
 
     try {
+      String? linkedTransactionId;
+
+      // For receivables: Create expense transaction and deduct from account
+      if (_type == 'receivable' && _selectedAccount != null) {
+        final transaction = MoneyTransaction(
+          type: 'expense',
+          amount: amount,
+          category: 'Receivables',
+          note:
+              'Receivable from ${_personNameController.text.trim()} - ${_selectedCategory}',
+          accountId: _selectedAccount!.id,
+          date: _selectedDate,
+        );
+
+        final transactionProvider = context.read<TransactionProvider>();
+        final accountProvider = context.read<AccountProvider>();
+
+        // Add transaction
+        final transactionSuccess =
+            await transactionProvider.addTransaction(transaction);
+        if (!transactionSuccess) {
+          throw Exception('Failed to create transaction');
+        }
+
+        // Deduct from account
+        final updatedAccount = _selectedAccount!.copyWith(
+          currentBalance: _selectedAccount!.currentBalance - amount,
+        );
+        await accountProvider.updateAccount(updatedAccount);
+
+        linkedTransactionId = transaction.id;
+      }
+
       final debtReceivable = DebtReceivable(
         type: _type,
         personName: _personNameController.text.trim(),
@@ -161,6 +209,8 @@ class _AddDebtReceivableScreenState extends State<AddDebtReceivableScreen> {
         category: _selectedCategory!,
         note: _noteController.text.trim(),
         date: _selectedDate,
+        linkedAccountId: _selectedAccount?.id,
+        linkedTransactionId: linkedTransactionId,
       );
 
       final provider = context.read<DebtReceivablesProvider>();
@@ -326,7 +376,7 @@ class _AddDebtReceivableScreenState extends State<AddDebtReceivableScreen> {
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Text(
-                '₹$_displayAmount',
+                _displayAmount,
                 style: TextStyle(
                   fontSize: 32,
                   fontWeight: FontWeight.bold,
@@ -369,6 +419,62 @@ class _AddDebtReceivableScreenState extends State<AddDebtReceivableScreen> {
               ),
             ),
             const SizedBox(height: 20),
+
+            // Account selector (for receivables only)
+            if (_type == 'receivable')
+              Consumer<AccountProvider>(
+                builder: (context, accountProvider, _) {
+                  final accounts = accountProvider.accounts
+                      .where((acc) => acc.isActive)
+                      .toList();
+
+                  return Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    decoration: BoxDecoration(
+                      color: Colors.grey[900],
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<Account>(
+                        value: _selectedAccount,
+                        isExpanded: true,
+                        dropdownColor: Colors.grey[900],
+                        hint: Text(
+                          'Select account (where money came from)',
+                          style: TextStyle(color: Colors.grey[400]),
+                        ),
+                        style:
+                            const TextStyle(color: Colors.white, fontSize: 16),
+                        items: accounts.map((account) {
+                          return DropdownMenuItem(
+                            value: account,
+                            child: Row(
+                              children: [
+                                Icon(Icons.account_balance_wallet,
+                                    color: color, size: 20),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(account.name),
+                                ),
+                                Text(
+                                  CurrencyFormatter.format(
+                                      account.currentBalance),
+                                  style: TextStyle(
+                                      color: Colors.grey[400], fontSize: 14),
+                                ),
+                              ],
+                            ),
+                          );
+                        }).toList(),
+                        onChanged: (value) {
+                          setState(() => _selectedAccount = value);
+                        },
+                      ),
+                    ),
+                  );
+                },
+              ),
+            if (_type == 'receivable') const SizedBox(height: 20),
 
             // Note input
             TextField(

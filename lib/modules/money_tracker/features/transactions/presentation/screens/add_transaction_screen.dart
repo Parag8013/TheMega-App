@@ -622,9 +622,8 @@ class _TransferSelector extends StatelessWidget {
           color: Colors.grey[900],
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: accountName != null
-                ? Colors.yellow[700]!
-                : Colors.grey[800]!,
+            color:
+                accountName != null ? Colors.yellow[700]! : Colors.grey[800]!,
             width: 2,
           ),
         ),
@@ -633,9 +632,8 @@ class _TransferSelector extends StatelessWidget {
           children: [
             Icon(
               accountName != null ? Icons.account_balance_wallet : Icons.add,
-              color: accountName != null
-                  ? Colors.yellow[700]
-                  : Colors.grey[600],
+              color:
+                  accountName != null ? Colors.yellow[700] : Colors.grey[600],
               size: iconSize,
             ),
             const SizedBox(height: 8),
@@ -694,9 +692,8 @@ class _AccountSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final filteredAccounts = accounts
-        .where((account) => account.id != excludeAccountId)
-        .toList();
+    final filteredAccounts =
+        accounts.where((account) => account.id != excludeAccountId).toList();
 
     return Container(
       padding: const EdgeInsets.all(20),
@@ -777,6 +774,15 @@ class _DebtReceivableTab extends StatelessWidget {
                         builderContext,
                         listen: false,
                       );
+                      final accountProvider = Provider.of<AccountProvider>(
+                        builderContext,
+                        listen: false,
+                      );
+                      final transactionProvider =
+                          Provider.of<TransactionProvider>(
+                        builderContext,
+                        listen: false,
+                      );
 
                       final result = await Navigator.push(
                         builderContext,
@@ -786,6 +792,12 @@ class _DebtReceivableTab extends StatelessWidget {
                               ChangeNotifierProvider.value(value: debtProvider),
                               ChangeNotifierProvider.value(
                                 value: categoryProvider,
+                              ),
+                              ChangeNotifierProvider.value(
+                                value: accountProvider,
+                              ),
+                              ChangeNotifierProvider.value(
+                                value: transactionProvider,
                               ),
                             ],
                             child: const AddDebtReceivableScreen(),

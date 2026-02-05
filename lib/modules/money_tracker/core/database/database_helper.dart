@@ -9,7 +9,7 @@ import '../../../../core/services/module_launcher.dart';
 
 class DatabaseHelper {
   static const String dbName = 'money_tracker.db';
-  static const int dbVersion = 5; // Incremented for debt/receivables table
+  static const int dbVersion = 6; // Incremented to fix foreign key constraints
 
   DatabaseHelper._privateConstructor();
   static final DatabaseHelper instance = DatabaseHelper._privateConstructor();
@@ -188,6 +188,55 @@ class DatabaseHelper {
       );
     }
 
+    if (oldVersion < 6) {
+      // Fix foreign key constraints on debt_receivables table
+      // Need to recreate table with ON DELETE SET NULL
+
+      // Create temporary table with new schema
+      await db.execute('''
+        CREATE TABLE debt_receivables_new (
+          id TEXT PRIMARY KEY,
+          type TEXT NOT NULL CHECK(type IN ('debt', 'receivable')),
+          person_name TEXT NOT NULL,
+          amount REAL NOT NULL,
+          category TEXT NOT NULL,
+          note TEXT,
+          linked_account_id TEXT,
+          linked_transaction_id TEXT,
+          is_settled INTEGER NOT NULL DEFAULT 0,
+          transaction_date TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (linked_account_id) REFERENCES accounts (id) ON DELETE SET NULL,
+          FOREIGN KEY (linked_transaction_id) REFERENCES transactions (id) ON DELETE SET NULL
+        )
+      ''');
+
+      // Copy data from old table
+      await db.execute('''
+        INSERT INTO debt_receivables_new 
+        SELECT * FROM debt_receivables
+      ''');
+
+      // Drop old table
+      await db.execute('DROP TABLE debt_receivables');
+
+      // Rename new table
+      await db.execute(
+          'ALTER TABLE debt_receivables_new RENAME TO debt_receivables');
+
+      // Recreate indexes
+      await db.execute(
+        'CREATE INDEX idx_debt_receivables_date ON debt_receivables(transaction_date)',
+      );
+      await db.execute(
+        'CREATE INDEX idx_debt_receivables_person ON debt_receivables(person_name)',
+      );
+      await db.execute(
+        'CREATE INDEX idx_debt_receivables_settled ON debt_receivables(is_settled)',
+      );
+    }
+
     print('✅ Database upgraded to version $newVersion');
   }
 
@@ -324,8 +373,8 @@ class DatabaseHelper {
         transaction_date TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
-        FOREIGN KEY (linked_account_id) REFERENCES accounts (id),
-        FOREIGN KEY (linked_transaction_id) REFERENCES transactions (id)
+        FOREIGN KEY (linked_account_id) REFERENCES accounts (id) ON DELETE SET NULL,
+        FOREIGN KEY (linked_transaction_id) REFERENCES transactions (id) ON DELETE SET NULL
       )
     ''');
 
@@ -422,8 +471,7 @@ class DatabaseHelper {
       if (accountMaps.isNotEmpty) {
         final currentBalance = accountMaps.first['current_balance'] as double;
         final balanceChange = transaction.type == 'expense'
-            ? transaction
-                  .amount // Add back expense amount
+            ? transaction.amount // Add back expense amount
             : -transaction.amount; // Subtract income amount
 
         await txn.update(
@@ -719,13 +767,16 @@ class DatabaseHelper {
     int colorValue,
   ) async {
     final db = await database;
-    await db.insert('categories', {
-      'id': id,
-      'name': name,
-      'icon_name': iconName,
-      'color_value': colorValue,
-      'created_at': DateTime.now().toUtc().toIso8601String(),
-    }, conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.insert(
+        'categories',
+        {
+          'id': id,
+          'name': name,
+          'icon_name': iconName,
+          'color_value': colorValue,
+          'created_at': DateTime.now().toUtc().toIso8601String(),
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   Future<List<Map<String, dynamic>>> getAllCategories() async {
@@ -770,11 +821,14 @@ class DatabaseHelper {
 
   Future<void> setCategoryBudget(String categoryName, double amount) async {
     final db = await database;
-    await db.insert('category_budgets', {
-      'category_name': categoryName,
-      'amount': amount,
-      'updated_at': DateTime.now().toUtc().toIso8601String(),
-    }, conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.insert(
+        'category_budgets',
+        {
+          'category_name': categoryName,
+          'amount': amount,
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   Future<Map<String, double>> getAllCategoryBudgets() async {
@@ -918,8 +972,8 @@ class DatabaseHelper {
   ) async {
     final db = await database;
     final dateStr = date.toUtc().toIso8601String().split(
-      'T',
-    )[0]; // Get date part only
+          'T',
+        )[0]; // Get date part only
 
     final result = await db.query(
       'processed_recurring_payments',

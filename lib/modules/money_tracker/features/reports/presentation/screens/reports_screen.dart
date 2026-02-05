@@ -180,9 +180,8 @@ class _AnalyticsTab extends StatelessWidget {
                               isBudgetExceeded
                                   ? Icons.warning_amber_rounded
                                   : Icons.check_circle,
-                              color: isBudgetExceeded
-                                  ? Colors.red
-                                  : Colors.green,
+                              color:
+                                  isBudgetExceeded ? Colors.red : Colors.green,
                               size: 24,
                             ),
                             const SizedBox(width: 8),
@@ -680,11 +679,25 @@ class _AccountsTab extends StatelessWidget {
                     context,
                     listen: false,
                   );
+                  final accountProvider = Provider.of<AccountProvider>(
+                    context,
+                    listen: false,
+                  );
+                  final transactionProvider = Provider.of<TransactionProvider>(
+                    context,
+                    listen: false,
+                  );
+
                   await Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (context) => ChangeNotifierProvider.value(
-                        value: debtProvider,
+                      builder: (context) => MultiProvider(
+                        providers: [
+                          ChangeNotifierProvider.value(value: debtProvider),
+                          ChangeNotifierProvider.value(value: accountProvider),
+                          ChangeNotifierProvider.value(
+                              value: transactionProvider),
+                        ],
                         child: const DebtReceivablesListScreen(),
                       ),
                     ),

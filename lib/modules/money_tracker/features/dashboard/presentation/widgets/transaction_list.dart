@@ -13,7 +13,7 @@ class TransactionList extends StatelessWidget {
   final Map<DateTime, List<MoneyTransaction>> transactionGroups;
 
   const TransactionList({Key? key, required this.transactionGroups})
-    : super(key: key);
+      : super(key: key);
 
   @override
   Widget build(BuildContext context) {
@@ -83,9 +83,7 @@ class TransactionList extends StatelessWidget {
             ),
 
             // Transaction items - skip transfer_in (only show transfer_out)
-            ...transactions
-                .where((t) => t.transferType != 'transfer_in')
-                .map(
+            ...transactions.where((t) => t.transferType != 'transfer_in').map(
                   (transaction) => _buildTransactionItem(context, transaction),
                 ),
 
@@ -120,7 +118,7 @@ class TransactionList extends StatelessWidget {
               ),
               Flexible(
                 child: Text(
-                  '₹${_formatAmount(income)}',
+                  _formatAmount(income),
                   style: const TextStyle(
                     color: Colors.green,
                     fontSize: 11,
@@ -143,7 +141,7 @@ class TransactionList extends StatelessWidget {
               ),
               Flexible(
                 child: Text(
-                  '₹${_formatAmount(expense)}',
+                  _formatAmount(expense),
                   style: const TextStyle(
                     color: Colors.red,
                     fontSize: 11,
@@ -243,8 +241,8 @@ class TransactionList extends StatelessWidget {
                           isTransfer
                               ? 'Transfer'
                               : (transaction.note.isNotEmpty
-                                    ? transaction.note
-                                    : transaction.category),
+                                  ? transaction.note
+                                  : transaction.category),
                           style: const TextStyle(
                             color: Colors.white,
                             fontWeight: FontWeight.w500,
@@ -257,11 +255,11 @@ class TransactionList extends StatelessWidget {
                         Text(
                           isTransfer
                               ? transaction.note.isNotEmpty
-                                    ? transaction.note
-                                    : transaction.category
+                                  ? transaction.note
+                                  : transaction.category
                               : (transaction.note.isNotEmpty
-                                    ? transaction.category
-                                    : ''),
+                                  ? transaction.category
+                                  : ''),
                           style: TextStyle(
                             color: Colors.grey[400],
                             fontSize: 13,

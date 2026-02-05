@@ -3,7 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../../providers/debt_receivables_provider.dart';
+import '../../../accounts/providers/account_provider.dart';
+import '../../../transactions/providers/transaction_provider.dart';
 import '../../../../core/models/debt_receivable_model.dart';
+import '../../../../core/models/transaction_model.dart';
+import '../../../../core/models/account_model.dart';
 import '../../../../core/utils/currency_formatter.dart';
 
 class DebtReceivablesListScreen extends StatefulWidget {
@@ -124,9 +128,8 @@ class _DebtReceivablesListScreenState extends State<DebtReceivablesListScreen> {
                   title: Row(
                     children: [
                       CircleAvatar(
-                        backgroundColor: netAmount >= 0
-                            ? Colors.green
-                            : Colors.red,
+                        backgroundColor:
+                            netAmount >= 0 ? Colors.green : Colors.red,
                         child: Text(
                           personName[0].toUpperCase(),
                           style: const TextStyle(
@@ -229,9 +232,8 @@ class _DebtReceivablesListScreenState extends State<DebtReceivablesListScreen> {
                         color: color,
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
-                        decoration: item.isSettled
-                            ? TextDecoration.lineThrough
-                            : null,
+                        decoration:
+                            item.isSettled ? TextDecoration.lineThrough : null,
                       ),
                     ),
                     Text(
@@ -308,43 +310,207 @@ class _DebtReceivablesListScreenState extends State<DebtReceivablesListScreen> {
     );
   }
 
-  void _settleDebtReceivable(DebtReceivable item) {
-    // Capture provider before showing dialog to avoid context issues
-    final provider = context.read<DebtReceivablesProvider>();
+  void _settleDebtReceivable(DebtReceivable item) async {
+    // For debts, show account selection dialog
+    if (item.type == 'debt') {
+      await _settleDebtWithAccountSelection(item);
+    } else {
+      // For receivables, just mark as settled and add money back to account
+      await _settleReceivable(item);
+    }
+  }
 
-    showDialog(
+  Future<void> _settleDebtWithAccountSelection(DebtReceivable item) async {
+    final accountProvider = context.read<AccountProvider>();
+    final accounts =
+        accountProvider.accounts.where((acc) => acc.isActive).toList();
+
+    if (accounts.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content:
+              Text('No active accounts found. Please create an account first.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    Account? selectedAccount;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          backgroundColor: Colors.grey[900],
+          title: const Text(
+            'Settle Debt',
+            style: TextStyle(color: Colors.white),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Settle debt of ${CurrencyFormatter.format(item.amount)} to ${item.personName}',
+                style: const TextStyle(color: Colors.white70),
+              ),
+              const SizedBox(height: 20),
+              Text(
+                'Select account to pay from:',
+                style: TextStyle(color: Colors.grey[400], fontSize: 14),
+              ),
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                decoration: BoxDecoration(
+                  color: Colors.grey[850],
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<Account>(
+                    value: selectedAccount,
+                    isExpanded: true,
+                    dropdownColor: Colors.grey[850],
+                    hint: Text(
+                      'Choose account',
+                      style: TextStyle(color: Colors.grey[400]),
+                    ),
+                    style: const TextStyle(color: Colors.white),
+                    items: accounts.map((account) {
+                      return DropdownMenuItem(
+                        value: account,
+                        child: Row(
+                          children: [
+                            const Icon(Icons.account_balance_wallet,
+                                color: Colors.yellow, size: 18),
+                            const SizedBox(width: 8),
+                            Expanded(child: Text(account.name)),
+                            Text(
+                              CurrencyFormatter.format(account.currentBalance),
+                              style: TextStyle(
+                                  color: Colors.grey[400], fontSize: 12),
+                            ),
+                          ],
+                        ),
+                      );
+                    }).toList(),
+                    onChanged: (value) {
+                      setState(() => selectedAccount = value);
+                    },
+                  ),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: Text('Cancel', style: TextStyle(color: Colors.grey[400])),
+            ),
+            ElevatedButton(
+              onPressed: selectedAccount == null
+                  ? null
+                  : () => Navigator.pop(dialogContext, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Settle'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (confirmed == true && selectedAccount != null) {
+      // Show loading
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(
+          child: CircularProgressIndicator(color: Colors.yellow),
+        ),
+      );
+
+      try {
+        final transactionProvider = context.read<TransactionProvider>();
+        final debtProvider = context.read<DebtReceivablesProvider>();
+
+        // Create expense transaction
+        final transaction = MoneyTransaction(
+          type: 'expense',
+          amount: item.amount,
+          category: 'Debt Settled',
+          note: 'Debt settled to ${item.personName} - ${item.category}',
+          accountId: selectedAccount!.id,
+          date: DateTime.now(),
+        );
+
+        // Add transaction
+        final transactionSuccess =
+            await transactionProvider.addTransaction(transaction);
+        if (!transactionSuccess) {
+          throw Exception('Failed to create transaction');
+        }
+
+        // Deduct from account
+        final updatedAccount = selectedAccount!.copyWith(
+          currentBalance: selectedAccount!.currentBalance - item.amount,
+        );
+        await accountProvider.updateAccount(updatedAccount);
+
+        // Mark as settled
+        final success = await debtProvider.settleDebtReceivable(item.id);
+
+        // Close loading
+        if (mounted) Navigator.pop(context);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                  success ? 'Debt settled successfully' : 'Failed to settle'),
+              backgroundColor: success ? Colors.green : Colors.red,
+            ),
+          );
+        }
+      } catch (e) {
+        // Close loading
+        if (mounted) Navigator.pop(context);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error: ${e.toString()}'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    }
+  }
+
+  Future<void> _settleReceivable(DebtReceivable item) async {
+    final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         backgroundColor: Colors.grey[900],
         title: const Text(
-          'Settle Transaction',
+          'Settle Receivable',
           style: TextStyle(color: Colors.white),
         ),
         content: Text(
-          'Mark this ${item.type} of ${CurrencyFormatter.format(item.amount)} as settled?',
+          'Mark receivable of ${CurrencyFormatter.format(item.amount)} from ${item.personName} as settled?\n\nThis will create an income transaction showing the money returned to ${item.linkedAccountId != null ? "the original account" : "your account"}.',
           style: const TextStyle(color: Colors.white70),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
+            onPressed: () => Navigator.pop(dialogContext, false),
             child: Text('Cancel', style: TextStyle(color: Colors.grey[400])),
           ),
           ElevatedButton(
-            onPressed: () async {
-              Navigator.pop(dialogContext);
-              final success = await provider.settleDebtReceivable(item.id);
-
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      success ? 'Marked as settled' : 'Failed to settle',
-                    ),
-                    backgroundColor: success ? Colors.green : Colors.red,
-                  ),
-                );
-              }
-            },
+            onPressed: () => Navigator.pop(dialogContext, true),
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.green,
               foregroundColor: Colors.white,
@@ -354,6 +520,76 @@ class _DebtReceivablesListScreenState extends State<DebtReceivablesListScreen> {
         ],
       ),
     );
+
+    if (confirmed == true) {
+      // Show loading
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(
+          child: CircularProgressIndicator(color: Colors.yellow),
+        ),
+      );
+
+      try {
+        final debtProvider = context.read<DebtReceivablesProvider>();
+        final accountProvider = context.read<AccountProvider>();
+        final transactionProvider = context.read<TransactionProvider>();
+
+        // If there's a linked account, add money back and create income transaction
+        if (item.linkedAccountId != null) {
+          final account = accountProvider.accounts
+              .firstWhere((acc) => acc.id == item.linkedAccountId);
+
+          // Add money back to account
+          final updatedAccount = account.copyWith(
+            currentBalance: account.currentBalance + item.amount,
+          );
+          await accountProvider.updateAccount(updatedAccount);
+
+          // Create income transaction showing money returned
+          final incomeTransaction = MoneyTransaction(
+            type: 'income',
+            amount: item.amount,
+            category: 'Receivables Settled',
+            note: 'Received from ${item.personName} - ${item.category}',
+            accountId: account.id,
+            date: DateTime.now(),
+          );
+
+          await transactionProvider.addTransaction(incomeTransaction);
+        }
+
+        // Mark as settled
+        final success = await debtProvider.settleDebtReceivable(item.id);
+
+        // Close loading
+        if (mounted) Navigator.pop(context);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(success
+                  ? 'Receivable settled successfully'
+                  : 'Failed to settle'),
+              backgroundColor: success ? Colors.green : Colors.red,
+            ),
+          );
+        }
+      } catch (e) {
+        // Close loading
+        if (mounted) Navigator.pop(context);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error: ${e.toString()}'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    }
   }
 
   void _deleteDebtReceivable(DebtReceivable item) {
