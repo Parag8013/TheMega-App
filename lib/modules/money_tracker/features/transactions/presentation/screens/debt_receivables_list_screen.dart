@@ -533,27 +533,18 @@ class _DebtReceivablesListScreenState extends State<DebtReceivablesListScreen> {
 
       try {
         final debtProvider = context.read<DebtReceivablesProvider>();
-        final accountProvider = context.read<AccountProvider>();
         final transactionProvider = context.read<TransactionProvider>();
 
-        // If there's a linked account, add money back and create income transaction
+        // If there's a linked account, create income transaction showing money returned
+        // The transaction provider will automatically update the account balance
         if (item.linkedAccountId != null) {
-          final account = accountProvider.accounts
-              .firstWhere((acc) => acc.id == item.linkedAccountId);
-
-          // Add money back to account
-          final updatedAccount = account.copyWith(
-            currentBalance: account.currentBalance + item.amount,
-          );
-          await accountProvider.updateAccount(updatedAccount);
-
           // Create income transaction showing money returned
           final incomeTransaction = MoneyTransaction(
             type: 'income',
             amount: item.amount,
             category: 'Receivables Settled',
             note: 'Received from ${item.personName} - ${item.category}',
-            accountId: account.id,
+            accountId: item.linkedAccountId!,
             date: DateTime.now(),
           );
 
