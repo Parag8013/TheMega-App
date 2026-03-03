@@ -35,6 +35,11 @@ class TransactionProvider with ChangeNotifier {
       .where((t) => t.type == 'expense')
       .fold(0.0, (sum, t) => sum + t.amount);
 
+  // Receivable amounts (money lent out, not counted as expense)
+  double get totalReceivables => _transactions
+      .where((t) => t.type == 'receivable')
+      .fold(0.0, (sum, t) => sum + t.amount);
+
   double get balance => totalIncome - totalExpense;
 
   bool get isLoading => _status == TransactionStatus.loading;
@@ -117,9 +122,8 @@ class TransactionProvider with ChangeNotifier {
     final grouped = <DateTime, List<MoneyTransaction>>{};
 
     // Filter out transfer_in transactions to avoid showing duplicates
-    final filteredTransactions = _transactions
-        .where((t) => t.transferType != 'transfer_in')
-        .toList();
+    final filteredTransactions =
+        _transactions.where((t) => t.transferType != 'transfer_in').toList();
 
     for (final transaction in filteredTransactions) {
       final dateKey = DateTime(

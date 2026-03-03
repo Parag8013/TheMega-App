@@ -27,8 +27,7 @@ class MoneyTransaction {
     DateTime? updatedAt,
     this.transferId,
     this.transferType,
-  }) :
-        id = id ?? _generateId(),
+  })  : id = id ?? _generateId(),
         date = date ?? DateTime.now(),
         createdAt = createdAt ?? DateTime.now(),
         updatedAt = updatedAt ?? DateTime.now() {
@@ -41,22 +40,26 @@ class MoneyTransaction {
 
   void _validate() {
     if (amount <= 0) throw ArgumentError('Amount must be positive');
-    if (category.trim().isEmpty) throw ArgumentError('Category cannot be empty');
-    if (!['income', 'expense'].contains(type.toLowerCase())) {
-      throw ArgumentError('Type must be either "income" or "expense"');
+    if (category.trim().isEmpty)
+      throw ArgumentError('Category cannot be empty');
+    if (!['income', 'expense', 'receivable'].contains(type.toLowerCase())) {
+      throw ArgumentError('Type must be "income", "expense", or "receivable"');
     }
-    if (accountId.trim().isEmpty) throw ArgumentError('Account ID cannot be empty');
+    if (accountId.trim().isEmpty)
+      throw ArgumentError('Account ID cannot be empty');
   }
 
   // Get icon for category
   IconData get categoryIcon {
     if (type == 'expense') {
-      final expenseCategory = CategoryConstants.expenseCategories
-          .firstWhere((cat) => cat.label == category, orElse: () => CategoryConstants.expenseCategories.first);
+      final expenseCategory = CategoryConstants.expenseCategories.firstWhere(
+          (cat) => cat.label == category,
+          orElse: () => CategoryConstants.expenseCategories.first);
       return expenseCategory.icon;
     } else {
-      final incomeCategory = CategoryConstants.incomeCategories
-          .firstWhere((cat) => cat.label == category, orElse: () => CategoryConstants.incomeCategories.first);
+      final incomeCategory = CategoryConstants.incomeCategories.firstWhere(
+          (cat) => cat.label == category,
+          orElse: () => CategoryConstants.incomeCategories.first);
       return incomeCategory.icon;
     }
   }

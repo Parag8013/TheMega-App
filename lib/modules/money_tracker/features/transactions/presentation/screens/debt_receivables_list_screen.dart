@@ -501,7 +501,7 @@ class _DebtReceivablesListScreenState extends State<DebtReceivablesListScreen> {
           style: TextStyle(color: Colors.white),
         ),
         content: Text(
-          'Mark receivable of ${CurrencyFormatter.format(item.amount)} from ${item.personName} as settled?\n\nThis will create an income transaction showing the money returned to ${item.linkedAccountId != null ? "the original account" : "your account"}.',
+          'Mark receivable of ${CurrencyFormatter.format(item.amount)} from ${item.personName} as settled?\n\nThe amount will be added back to ${item.linkedAccountId != null ? "the original account" : "your account"}.',
           style: const TextStyle(color: Colors.white70),
         ),
         actions: [
@@ -533,25 +533,35 @@ class _DebtReceivablesListScreenState extends State<DebtReceivablesListScreen> {
 
       try {
         final debtProvider = context.read<DebtReceivablesProvider>();
+        final accountProvider = context.read<AccountProvider>();
         final transactionProvider = context.read<TransactionProvider>();
 
-        // If there's a linked account, create income transaction showing money returned
-        // The transaction provider will automatically update the account balance
+        // Add money back to the linked account (no new transaction needed)
         if (item.linkedAccountId != null) {
-          // Create income transaction showing money returned
-          final incomeTransaction = MoneyTransaction(
-            type: 'income',
-            amount: item.amount,
-            category: 'Receivables Settled',
-            note: 'Received from ${item.personName} - ${item.category}',
-            accountId: item.linkedAccountId!,
-            date: DateTime.now(),
-          );
+          final account = accountProvider.accounts
+              .firstWhere((acc) => acc.id == item.linkedAccountId);
 
-          await transactionProvider.addTransaction(incomeTransaction);
+          final updatedAccount = account.copyWith(
+            currentBalance: account.currentBalance + item.amount,
+          );
+          await accountProvider.updateAccount(updatedAccount);
         }
 
-        // Mark as settled
+        // Mark the linked transaction as settled (turn orange → green with tick)
+        if (item.linkedTransactionId != null) {
+          final transactions = transactionProvider.transactions;
+          final linkedTxn = transactions
+              .where((t) => t.id == item.linkedTransactionId)
+              .toList();
+          if (linkedTxn.isNotEmpty) {
+            final updatedTxn = linkedTxn.first.copyWith(
+              transferType: 'settled',
+            );
+            await transactionProvider.updateTransaction(updatedTxn);
+          }
+        }
+
+        // Mark debt/receivable as settled
         final success = await debtProvider.settleDebtReceivable(item.id);
 
         // Close loading

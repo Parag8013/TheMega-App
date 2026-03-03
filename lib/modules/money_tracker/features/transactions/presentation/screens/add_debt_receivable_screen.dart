@@ -174,7 +174,7 @@ class _AddDebtReceivableScreenState extends State<AddDebtReceivableScreen> {
       // For receivables: Create expense transaction and deduct from account
       if (_type == 'receivable' && _selectedAccount != null) {
         final transaction = MoneyTransaction(
-          type: 'expense',
+          type: 'receivable',
           amount: amount,
           category: 'Receivables',
           note:

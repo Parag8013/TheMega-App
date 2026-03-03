@@ -167,12 +167,27 @@ class TransactionList extends StatelessWidget {
   ) {
     // Check if this is a transfer
     final isTransfer = transaction.transferType == 'transfer_out';
+    // Check if this is a receivable transaction
+    final isReceivable = transaction.type == 'receivable';
+    // Check if this receivable has been settled
+    final isSettledReceivable =
+        isReceivable && transaction.transferType == 'settled';
 
     final isExpense = transaction.type == 'expense';
     final color = isTransfer
         ? Colors.yellow[600]!
-        : (isExpense ? Colors.red : Colors.green);
-    final prefix = isTransfer ? '' : (isExpense ? '-' : '+');
+        : isSettledReceivable
+            ? Colors.purple
+            : isReceivable
+                ? Colors.orange[400]!
+                : (isExpense ? Colors.red : Colors.green);
+    final prefix = isTransfer
+        ? ''
+        : isSettledReceivable
+            ? '+'
+            : isReceivable
+                ? '-'
+                : (isExpense ? '-' : '+');
 
     return GestureDetector(
       onTap: () {
@@ -224,7 +239,13 @@ class TransactionList extends StatelessWidget {
                       shape: BoxShape.circle,
                     ),
                     child: Icon(
-                      isTransfer ? Icons.swap_horiz : transaction.categoryIcon,
+                      isTransfer
+                          ? Icons.swap_horiz
+                          : isSettledReceivable
+                              ? Icons.check_circle
+                              : isReceivable
+                                  ? Icons.person_outline
+                                  : transaction.categoryIcon,
                       color: color,
                       size: 24,
                     ),

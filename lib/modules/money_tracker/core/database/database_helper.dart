@@ -9,7 +9,7 @@ import '../../../../core/services/module_launcher.dart';
 
 class DatabaseHelper {
   static const String dbName = 'money_tracker.db';
-  static const int dbVersion = 6; // Incremented to fix foreign key constraints
+  static const int dbVersion = 7; // Added 'receivable' transaction type
 
   DatabaseHelper._privateConstructor();
   static final DatabaseHelper instance = DatabaseHelper._privateConstructor();
@@ -237,6 +237,47 @@ class DatabaseHelper {
       );
     }
 
+    if (oldVersion < 7) {
+      // Add 'receivable' as a valid transaction type
+      // SQLite doesn't allow ALTER CHECK, so recreate the table
+
+      await db.execute('''
+        CREATE TABLE transactions_new (
+          id TEXT PRIMARY KEY,
+          account_id TEXT NOT NULL,
+          amount REAL NOT NULL,
+          category TEXT NOT NULL,
+          note TEXT,
+          transaction_type TEXT NOT NULL CHECK(transaction_type IN ('income', 'expense', 'receivable')),
+          transaction_date TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          transfer_id TEXT,
+          transfer_type TEXT,
+          FOREIGN KEY (account_id) REFERENCES accounts (id) ON DELETE CASCADE
+        )
+      ''');
+
+      await db.execute('''
+        INSERT INTO transactions_new 
+        SELECT * FROM transactions
+      ''');
+
+      await db.execute('DROP TABLE transactions');
+      await db.execute('ALTER TABLE transactions_new RENAME TO transactions');
+
+      // Recreate indexes
+      await db.execute(
+        'CREATE INDEX idx_transactions_date ON transactions(transaction_date)',
+      );
+      await db.execute(
+        'CREATE INDEX idx_transactions_account ON transactions(account_id)',
+      );
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_transactions_transfer ON transactions(transfer_id)',
+      );
+    }
+
     print('✅ Database upgraded to version $newVersion');
   }
 
@@ -266,7 +307,7 @@ class DatabaseHelper {
         amount REAL NOT NULL,
         category TEXT NOT NULL,
         note TEXT,
-        transaction_type TEXT NOT NULL CHECK(transaction_type IN ('income', 'expense')),
+        transaction_type TEXT NOT NULL CHECK(transaction_type IN ('income', 'expense', 'receivable')),
         transaction_date TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
@@ -409,8 +450,8 @@ class DatabaseHelper {
 
       final currentBalance = accountExists.first['current_balance'] as double;
 
-      // Check insufficient balance for expenses
-      if (transaction.type == 'expense' &&
+      // Check insufficient balance for expenses and receivables
+      if ((transaction.type == 'expense' || transaction.type == 'receivable') &&
           currentBalance < transaction.amount) {
         throw Exception('Insufficient balance');
       }
@@ -419,9 +460,11 @@ class DatabaseHelper {
       await txn.insert('transactions', transaction.toMap());
 
       // Update account balance
-      final balanceChange = transaction.type == 'expense'
-          ? -transaction.amount
-          : transaction.amount;
+      // 'receivable' deducts like 'expense' (money lent out)
+      final balanceChange =
+          (transaction.type == 'expense' || transaction.type == 'receivable')
+              ? -transaction.amount
+              : transaction.amount;
 
       await txn.update(
         'accounts',
@@ -470,9 +513,10 @@ class DatabaseHelper {
 
       if (accountMaps.isNotEmpty) {
         final currentBalance = accountMaps.first['current_balance'] as double;
-        final balanceChange = transaction.type == 'expense'
-            ? transaction.amount // Add back expense amount
-            : -transaction.amount; // Subtract income amount
+        final balanceChange =
+            (transaction.type == 'expense' || transaction.type == 'receivable')
+                ? transaction.amount // Add back expense/receivable amount
+                : -transaction.amount; // Subtract income amount
 
         await txn.update(
           'accounts',
@@ -525,7 +569,8 @@ class DatabaseHelper {
 
         if (oldAccountMaps.isNotEmpty) {
           final oldBalance = oldAccountMaps.first['current_balance'] as double;
-          final oldChange = oldTransaction.type == 'expense'
+          final oldChange = (oldTransaction.type == 'expense' ||
+                  oldTransaction.type == 'receivable')
               ? oldTransaction.amount
               : -oldTransaction.amount;
 
@@ -549,7 +594,8 @@ class DatabaseHelper {
 
         if (newAccountMaps.isNotEmpty) {
           final newBalance = newAccountMaps.first['current_balance'] as double;
-          final newChange = transaction.type == 'expense'
+          final newChange = (transaction.type == 'expense' ||
+                  transaction.type == 'receivable')
               ? -transaction.amount
               : transaction.amount;
 
@@ -681,7 +727,7 @@ class DatabaseHelper {
     double amount,
     String type,
   ) async {
-    if (type != 'expense') return true;
+    if (type != 'expense' && type != 'receivable') return true;
 
     try {
       final balance = await getAccountBalance(accountId);
