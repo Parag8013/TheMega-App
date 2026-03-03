@@ -1,5 +1,6 @@
 // lib/features/transactions/presentation/widgets/calculator_sheet.dart
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../../../accounts/providers/account_provider.dart';
@@ -9,14 +10,16 @@ import '../../../../core/utils/currency_formatter.dart';
 class CalculatorSheet extends StatefulWidget {
   final String category;
   final IconData categoryIcon;
+  final Color? categoryColor;
   final String transactionType;
   final Function(double amount, String note, DateTime date, String accountId)
-  onSubmit;
+      onSubmit;
 
   const CalculatorSheet({
     Key? key,
     required this.category,
     required this.categoryIcon,
+    this.categoryColor,
     required this.transactionType,
     required this.onSubmit,
   }) : super(key: key);
@@ -26,13 +29,14 @@ class CalculatorSheet extends StatefulWidget {
 }
 
 class _CalculatorSheetState extends State<CalculatorSheet> {
+  String _expression = '0';
   String _displayAmount = '0';
-  String _actualAmount = '0';
   String _note = '';
   DateTime _selectedDate = DateTime.now();
   String? _selectedAccountId;
   final TextEditingController _noteController = TextEditingController();
-  bool _hasDecimalPoint = false;
+  final FocusNode _keyboardFocusNode = FocusNode();
+  bool _noteFieldFocused = false;
 
   @override
   void initState() {
@@ -44,51 +48,157 @@ class _CalculatorSheetState extends State<CalculatorSheet> {
           _selectedAccountId = accountProvider.accounts.first.id;
         });
       }
+      _keyboardFocusNode.requestFocus();
     });
   }
 
   @override
   void dispose() {
     _noteController.dispose();
+    _keyboardFocusNode.dispose();
     super.dispose();
   }
 
+  // --- Expression evaluation ---
+  double _evaluate(String expr) {
+    try {
+      // Replace display symbols with math symbols
+      expr = expr.replaceAll('×', '*').replaceAll('÷', '/');
+
+      // Handle percentage: convert "X%" to "(X/100)"
+      expr = expr.replaceAllMapped(
+        RegExp(r'(\d+\.?\d*)%'),
+        (m) => '(${m.group(1)}/100)',
+      );
+
+      // Simple expression parser supporting +, -, *, /
+      return _parseExpression(expr);
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  double _parseExpression(String expr) {
+    expr = expr.trim();
+    if (expr.isEmpty) return 0;
+
+    // Find last + or - (not inside parentheses, not at start)
+    int parenDepth = 0;
+    int lastAddSub = -1;
+    for (int i = expr.length - 1; i >= 0; i--) {
+      if (expr[i] == ')') parenDepth++;
+      if (expr[i] == '(') parenDepth--;
+      if (parenDepth == 0 && (expr[i] == '+' || expr[i] == '-') && i > 0) {
+        lastAddSub = i;
+        break;
+      }
+    }
+
+    if (lastAddSub > 0) {
+      final left = _parseExpression(expr.substring(0, lastAddSub));
+      final op = expr[lastAddSub];
+      final right = _parseTerm(expr.substring(lastAddSub + 1));
+      return op == '+' ? left + right : left - right;
+    }
+
+    return _parseTerm(expr);
+  }
+
+  double _parseTerm(String expr) {
+    expr = expr.trim();
+    if (expr.isEmpty) return 0;
+
+    // Find last * or /
+    int parenDepth = 0;
+    int lastMulDiv = -1;
+    for (int i = expr.length - 1; i >= 0; i--) {
+      if (expr[i] == ')') parenDepth++;
+      if (expr[i] == '(') parenDepth--;
+      if (parenDepth == 0 && (expr[i] == '*' || expr[i] == '/') && i > 0) {
+        lastMulDiv = i;
+        break;
+      }
+    }
+
+    if (lastMulDiv > 0) {
+      final left = _parseTerm(expr.substring(0, lastMulDiv));
+      final op = expr[lastMulDiv];
+      final right = _parseFactor(expr.substring(lastMulDiv + 1));
+      if (op == '/') {
+        return right != 0 ? left / right : 0;
+      }
+      return left * right;
+    }
+
+    return _parseFactor(expr);
+  }
+
+  double _parseFactor(String expr) {
+    expr = expr.trim();
+    if (expr.startsWith('(') && expr.endsWith(')')) {
+      return _parseExpression(expr.substring(1, expr.length - 1));
+    }
+    return double.tryParse(expr) ?? 0;
+  }
+
+  // --- Input handlers ---
   void _addDigit(String digit) {
     setState(() {
-      if (_actualAmount == '0' && digit != '0') {
-        _actualAmount = digit;
-      } else if (_actualAmount != '0') {
-        _actualAmount += digit;
+      if (_expression == '0' && digit != '0') {
+        _expression = digit;
+      } else if (_expression == '0' && digit == '0') {
+        // Don't add leading zeros
+      } else {
+        _expression += digit;
       }
       _updateDisplay();
     });
   }
 
   void _addDecimalPoint() {
-    if (!_hasDecimalPoint) {
-      setState(() {
-        if (_actualAmount == '0') {
-          _actualAmount = '0.';
+    setState(() {
+      // Find the last number segment (after any operator)
+      final lastSegment = _expression.split(RegExp(r'[+\-×÷]')).last;
+      if (!lastSegment.contains('.')) {
+        if (_expression == '0') {
+          _expression = '0.';
         } else {
-          _actualAmount += '.';
+          _expression += '.';
         }
-        _hasDecimalPoint = true;
         _updateDisplay();
-      });
-    }
+      }
+    });
+  }
+
+  void _addOperator(String op) {
+    setState(() {
+      final lastChar = _expression[_expression.length - 1];
+      // Replace operator if last char is already an operator
+      if ('+-×÷'.contains(lastChar)) {
+        _expression = _expression.substring(0, _expression.length - 1) + op;
+      } else if (lastChar != '.') {
+        _expression += op;
+      }
+      _updateDisplay();
+    });
+  }
+
+  void _addPercent() {
+    setState(() {
+      final lastChar = _expression[_expression.length - 1];
+      if (!('+-×÷.%'.contains(lastChar)) && _expression != '0') {
+        _expression += '%';
+        _updateDisplay();
+      }
+    });
   }
 
   void _backspace() {
     setState(() {
-      if (_actualAmount.length > 1) {
-        final removedChar = _actualAmount[_actualAmount.length - 1];
-        if (removedChar == '.') {
-          _hasDecimalPoint = false;
-        }
-        _actualAmount = _actualAmount.substring(0, _actualAmount.length - 1);
+      if (_expression.length > 1) {
+        _expression = _expression.substring(0, _expression.length - 1);
       } else {
-        _actualAmount = '0';
-        _hasDecimalPoint = false;
+        _expression = '0';
       }
       _updateDisplay();
     });
@@ -96,19 +206,128 @@ class _CalculatorSheetState extends State<CalculatorSheet> {
 
   void _clear() {
     setState(() {
-      _actualAmount = '0';
+      _expression = '0';
       _displayAmount = '0';
-      _hasDecimalPoint = false;
     });
   }
 
   void _updateDisplay() {
-    final amount = double.tryParse(_actualAmount) ?? 0;
-    _displayAmount = CurrencyFormatter.format(amount);
+    final amount = _evaluate(_expression);
+    _displayAmount = CurrencyFormatter.format(amount.abs());
+  }
+
+  // --- Keyboard handler ---
+  KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    if (_noteFieldFocused) return KeyEventResult.ignored;
+
+    final key = event.logicalKey;
+
+    // Digit keys
+    if (key == LogicalKeyboardKey.digit0 || key == LogicalKeyboardKey.numpad0) {
+      _addDigit('0');
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.digit1 || key == LogicalKeyboardKey.numpad1) {
+      _addDigit('1');
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.digit2 || key == LogicalKeyboardKey.numpad2) {
+      _addDigit('2');
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.digit3 || key == LogicalKeyboardKey.numpad3) {
+      _addDigit('3');
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.digit4 || key == LogicalKeyboardKey.numpad4) {
+      _addDigit('4');
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.digit5 || key == LogicalKeyboardKey.numpad5) {
+      _addDigit('5');
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.digit6 || key == LogicalKeyboardKey.numpad6) {
+      _addDigit('6');
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.digit7 || key == LogicalKeyboardKey.numpad7) {
+      _addDigit('7');
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.digit8 || key == LogicalKeyboardKey.numpad8) {
+      _addDigit('8');
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.digit9 || key == LogicalKeyboardKey.numpad9) {
+      _addDigit('9');
+      return KeyEventResult.handled;
+    }
+
+    // Operators
+    if (key == LogicalKeyboardKey.add || key == LogicalKeyboardKey.numpadAdd) {
+      _addOperator('+');
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.minus ||
+        key == LogicalKeyboardKey.numpadSubtract) {
+      _addOperator('-');
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.numpadMultiply ||
+        key == LogicalKeyboardKey.asterisk) {
+      _addOperator('×');
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.numpadDivide ||
+        key == LogicalKeyboardKey.slash) {
+      _addOperator('÷');
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.percent) {
+      _addPercent();
+      return KeyEventResult.handled;
+    }
+
+    // Decimal
+    if (key == LogicalKeyboardKey.period ||
+        key == LogicalKeyboardKey.numpadDecimal) {
+      _addDecimalPoint();
+      return KeyEventResult.handled;
+    }
+
+    // Backspace
+    if (key == LogicalKeyboardKey.backspace) {
+      _backspace();
+      return KeyEventResult.handled;
+    }
+
+    // Delete = clear
+    if (key == LogicalKeyboardKey.delete) {
+      _clear();
+      return KeyEventResult.handled;
+    }
+
+    // Enter = submit
+    if (key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter) {
+      _submitTransaction();
+      return KeyEventResult.handled;
+    }
+
+    // Escape = close
+    if (key == LogicalKeyboardKey.escape) {
+      Navigator.pop(context);
+      return KeyEventResult.handled;
+    }
+
+    return KeyEventResult.ignored;
   }
 
   void _showAccountSelector() {
-    // Capture providers before showing modal
     final accountProvider = context.read<AccountProvider>();
     final themeData = Theme.of(context);
 
@@ -135,7 +354,7 @@ class _CalculatorSheetState extends State<CalculatorSheet> {
               children: [
                 Container(
                   padding: const EdgeInsets.all(16),
-                  child: Text(
+                  child: const Text(
                     'Select Account',
                     style: TextStyle(
                       color: Colors.white,
@@ -154,9 +373,8 @@ class _CalculatorSheetState extends State<CalculatorSheet> {
 
                     return ListTile(
                       leading: CircleAvatar(
-                        backgroundColor: isSelected
-                            ? Colors.yellow[700]
-                            : Colors.grey[700],
+                        backgroundColor:
+                            isSelected ? Colors.yellow[700] : Colors.grey[700],
                         child: Icon(
                           Icons.account_balance_wallet,
                           color: isSelected ? Colors.black : Colors.white,
@@ -166,9 +384,8 @@ class _CalculatorSheetState extends State<CalculatorSheet> {
                         account.name,
                         style: TextStyle(
                           color: Colors.white,
-                          fontWeight: isSelected
-                              ? FontWeight.bold
-                              : FontWeight.normal,
+                          fontWeight:
+                              isSelected ? FontWeight.bold : FontWeight.normal,
                         ),
                       ),
                       subtitle: Text(
@@ -229,7 +446,7 @@ class _CalculatorSheetState extends State<CalculatorSheet> {
                   onPressed: () => Navigator.pop(context),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: Colors.grey,
-                    side: BorderSide(color: Colors.grey),
+                    side: const BorderSide(color: Colors.grey),
                   ),
                   child: const Text('Cancel'),
                 ),
@@ -293,11 +510,13 @@ class _CalculatorSheetState extends State<CalculatorSheet> {
     Color? backgroundColor,
     Color? textColor,
     IconData? icon,
+    int flex = 1,
   }) {
     return Expanded(
+      flex: flex,
       child: Container(
-        height: 60,
-        margin: const EdgeInsets.all(4),
+        height: 52,
+        margin: const EdgeInsets.all(3),
         child: ElevatedButton(
           onPressed: onPressed,
           style: ElevatedButton.styleFrom(
@@ -307,13 +526,14 @@ class _CalculatorSheetState extends State<CalculatorSheet> {
               borderRadius: BorderRadius.circular(8),
             ),
             elevation: 0,
+            padding: EdgeInsets.zero,
           ),
           child: icon != null
-              ? Icon(icon, size: 24)
+              ? Icon(icon, size: 22)
               : Text(
                   label,
                   style: const TextStyle(
-                    fontSize: 20,
+                    fontSize: 18,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
@@ -324,214 +544,245 @@ class _CalculatorSheetState extends State<CalculatorSheet> {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        color: Colors.black,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Handle bar
-          Container(
-            width: 40,
-            height: 4,
-            margin: const EdgeInsets.symmetric(vertical: 12),
-            decoration: BoxDecoration(
-              color: Colors.grey[600],
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
+    final iconColor = widget.categoryColor ?? Colors.yellow[700]!;
 
-          // Header
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Row(
-              children: [
-                CircleAvatar(
-                  backgroundColor: Colors.yellow[700],
-                  child: Icon(widget.categoryIcon, color: Colors.black),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    widget.category,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
+    return Focus(
+      focusNode: _keyboardFocusNode,
+      onKeyEvent: _handleKeyEvent,
+      child: Container(
+        decoration: const BoxDecoration(
+          color: Colors.black,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Handle bar
+            Container(
+              width: 40,
+              height: 4,
+              margin: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(
+                color: Colors.grey[600],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+
+            // Header
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    backgroundColor: iconColor.withOpacity(0.2),
+                    child: Icon(widget.categoryIcon, color: iconColor),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      widget.category,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
-                ),
-                Consumer<AccountProvider>(
-                  builder: (context, provider, _) {
-                    final selectedAccount = provider.accounts
-                        .where((a) => a.id == _selectedAccountId)
-                        .firstOrNull;
+                  Consumer<AccountProvider>(
+                    builder: (context, provider, _) {
+                      final selectedAccount = provider.accounts
+                          .where((a) => a.id == _selectedAccountId)
+                          .firstOrNull;
 
-                    return TextButton.icon(
-                      onPressed: _showAccountSelector,
-                      icon: const Icon(Icons.account_balance_wallet),
-                      label: Text(
-                        selectedAccount?.name ?? 'Select Account',
-                        style: TextStyle(
-                          color: selectedAccount == null
-                              ? Colors.red
-                              : Colors.white,
+                      return TextButton.icon(
+                        onPressed: _showAccountSelector,
+                        icon: const Icon(Icons.account_balance_wallet),
+                        label: Text(
+                          selectedAccount?.name ?? 'Select Account',
+                          style: TextStyle(
+                            color: selectedAccount == null
+                                ? Colors.red
+                                : Colors.white,
+                          ),
                         ),
-                      ),
-                    );
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+
+            // Expression display (small, shows the math expression)
+            if (_expression.contains(RegExp(r'[+\-×÷%]')))
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Text(
+                  _expression,
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: Colors.grey[400],
+                  ),
+                  textAlign: TextAlign.right,
+                ),
+              ),
+
+            // Amount display (big, shows the result)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+              child: Text(
+                '${widget.transactionType == 'expense' ? '-' : '+'}$_displayAmount',
+                style: TextStyle(
+                  fontSize: 32,
+                  fontWeight: FontWeight.bold,
+                  color: widget.transactionType == 'expense'
+                      ? Colors.red
+                      : Colors.green,
+                ),
+                textAlign: TextAlign.right,
+              ),
+            ),
+
+            // Note input
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Focus(
+                onFocusChange: (hasFocus) {
+                  _noteFieldFocused = hasFocus;
+                  if (!hasFocus) {
+                    _keyboardFocusNode.requestFocus();
+                  }
+                },
+                child: TextField(
+                  controller: _noteController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    hintText: 'Enter a note...',
+                    hintStyle: TextStyle(color: Colors.grey[400]),
+                    prefixIcon: Icon(Icons.note, color: Colors.grey[400]),
+                    filled: true,
+                    fillColor: Colors.grey[900],
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                  onChanged: (value) => _note = value,
+                  onEditingComplete: () {
+                    FocusScope.of(context).unfocus();
+                    _keyboardFocusNode.requestFocus();
                   },
                 ),
-              ],
-            ),
-          ),
-
-          // Amount display
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-            child: Text(
-              '${widget.transactionType == 'expense' ? '-' : '+'}$_displayAmount',
-              style: TextStyle(
-                fontSize: 32,
-                fontWeight: FontWeight.bold,
-                color: widget.transactionType == 'expense'
-                    ? Colors.red
-                    : Colors.green,
               ),
-              textAlign: TextAlign.right,
             ),
-          ),
 
-          // Note input
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: TextField(
-              controller: _noteController,
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                hintText: 'Enter a note...',
-                hintStyle: TextStyle(color: Colors.grey[400]),
-                prefixIcon: Icon(Icons.note, color: Colors.grey[400]),
-                filled: true,
-                fillColor: Colors.grey[900],
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: BorderSide.none,
-                ),
+            const SizedBox(height: 12),
+
+            // Calculator buttons - 5 columns
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Column(
+                children: [
+                  // Row 1: 7 8 9 ÷ Date
+                  Row(
+                    children: [
+                      _buildCalcButton(
+                          label: '7', onPressed: () => _addDigit('7')),
+                      _buildCalcButton(
+                          label: '8', onPressed: () => _addDigit('8')),
+                      _buildCalcButton(
+                          label: '9', onPressed: () => _addDigit('9')),
+                      _buildCalcButton(
+                        label: '÷',
+                        onPressed: () => _addOperator('÷'),
+                        backgroundColor: Colors.blueGrey[700],
+                      ),
+                      _buildCalcButton(
+                        label: DateFormat('dd MMM').format(_selectedDate),
+                        onPressed: _showDatePicker,
+                        backgroundColor: Colors.yellow[700],
+                        textColor: Colors.black,
+                      ),
+                    ],
+                  ),
+
+                  // Row 2: 4 5 6 × C
+                  Row(
+                    children: [
+                      _buildCalcButton(
+                          label: '4', onPressed: () => _addDigit('4')),
+                      _buildCalcButton(
+                          label: '5', onPressed: () => _addDigit('5')),
+                      _buildCalcButton(
+                          label: '6', onPressed: () => _addDigit('6')),
+                      _buildCalcButton(
+                        label: '×',
+                        onPressed: () => _addOperator('×'),
+                        backgroundColor: Colors.blueGrey[700],
+                      ),
+                      _buildCalcButton(
+                        label: 'C',
+                        onPressed: _clear,
+                        backgroundColor: Colors.orange[700],
+                      ),
+                    ],
+                  ),
+
+                  // Row 3: 1 2 3 - ⌫
+                  Row(
+                    children: [
+                      _buildCalcButton(
+                          label: '1', onPressed: () => _addDigit('1')),
+                      _buildCalcButton(
+                          label: '2', onPressed: () => _addDigit('2')),
+                      _buildCalcButton(
+                          label: '3', onPressed: () => _addDigit('3')),
+                      _buildCalcButton(
+                        label: '-',
+                        onPressed: () => _addOperator('-'),
+                        backgroundColor: Colors.blueGrey[700],
+                      ),
+                      _buildCalcButton(
+                        label: '',
+                        icon: Icons.backspace,
+                        onPressed: _backspace,
+                        backgroundColor: Colors.red[700],
+                      ),
+                    ],
+                  ),
+
+                  // Row 4: . 0 % + ✓
+                  Row(
+                    children: [
+                      _buildCalcButton(label: '.', onPressed: _addDecimalPoint),
+                      _buildCalcButton(
+                          label: '0', onPressed: () => _addDigit('0')),
+                      _buildCalcButton(
+                        label: '%',
+                        onPressed: _addPercent,
+                        backgroundColor: Colors.blueGrey[700],
+                      ),
+                      _buildCalcButton(
+                        label: '+',
+                        onPressed: () => _addOperator('+'),
+                        backgroundColor: Colors.blueGrey[700],
+                      ),
+                      _buildCalcButton(
+                        label: '',
+                        icon: Icons.check,
+                        onPressed: _submitTransaction,
+                        backgroundColor: Colors.green[700],
+                      ),
+                    ],
+                  ),
+                ],
               ),
-              onChanged: (value) => _note = value,
             ),
-          ),
 
-          const SizedBox(height: 16),
-
-          // Calculator buttons
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Column(
-              children: [
-                // Row 1
-                Row(
-                  children: [
-                    _buildCalcButton(
-                      label: '7',
-                      onPressed: () => _addDigit('7'),
-                    ),
-                    _buildCalcButton(
-                      label: '8',
-                      onPressed: () => _addDigit('8'),
-                    ),
-                    _buildCalcButton(
-                      label: '9',
-                      onPressed: () => _addDigit('9'),
-                    ),
-                    _buildCalcButton(
-                      label: DateFormat('dd MMM').format(_selectedDate),
-                      onPressed: _showDatePicker,
-                      backgroundColor: Colors.yellow[700],
-                      textColor: Colors.black,
-                    ),
-                  ],
-                ),
-
-                // Row 2
-                Row(
-                  children: [
-                    _buildCalcButton(
-                      label: '4',
-                      onPressed: () => _addDigit('4'),
-                    ),
-                    _buildCalcButton(
-                      label: '5',
-                      onPressed: () => _addDigit('5'),
-                    ),
-                    _buildCalcButton(
-                      label: '6',
-                      onPressed: () => _addDigit('6'),
-                    ),
-                    _buildCalcButton(
-                      label: 'C',
-                      onPressed: _clear,
-                      backgroundColor: Colors.orange[700],
-                    ),
-                  ],
-                ),
-
-                // Row 3
-                Row(
-                  children: [
-                    _buildCalcButton(
-                      label: '1',
-                      onPressed: () => _addDigit('1'),
-                    ),
-                    _buildCalcButton(
-                      label: '2',
-                      onPressed: () => _addDigit('2'),
-                    ),
-                    _buildCalcButton(
-                      label: '3',
-                      onPressed: () => _addDigit('3'),
-                    ),
-                    _buildCalcButton(
-                      label: '',
-                      icon: Icons.backspace,
-                      onPressed: _backspace,
-                      backgroundColor: Colors.red[700],
-                    ),
-                  ],
-                ),
-
-                // Row 4
-                Row(
-                  children: [
-                    _buildCalcButton(label: '.', onPressed: _addDecimalPoint),
-                    _buildCalcButton(
-                      label: '0',
-                      onPressed: () => _addDigit('0'),
-                    ),
-                    _buildCalcButton(
-                      label: '00',
-                      onPressed: () {
-                        _addDigit('0');
-                        _addDigit('0');
-                      },
-                    ),
-                    _buildCalcButton(
-                      label: '',
-                      icon: Icons.check,
-                      onPressed: _submitTransaction,
-                      backgroundColor: Colors.green[700],
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: 20),
-        ],
+            const SizedBox(height: 16),
+          ],
+        ),
       ),
     );
   }
@@ -547,7 +798,7 @@ class _CalculatorSheetState extends State<CalculatorSheet> {
       return;
     }
 
-    final amount = double.tryParse(_actualAmount) ?? 0;
+    final amount = _evaluate(_expression);
     if (amount <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -566,7 +817,6 @@ class _CalculatorSheetState extends State<CalculatorSheet> {
           .firstOrNull;
 
       if (selectedAccount != null && selectedAccount.currentBalance < amount) {
-        // Show popup dialog for low balance
         final shouldProceed = await showDialog<bool>(
           context: context,
           builder: (dialogContext) => AlertDialog(
@@ -683,7 +933,7 @@ class _CalculatorSheetState extends State<CalculatorSheet> {
         );
 
         if (shouldProceed != true) {
-          return; // User cancelled
+          return;
         }
       }
     }

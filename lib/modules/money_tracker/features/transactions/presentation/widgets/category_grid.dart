@@ -25,9 +25,8 @@ class _CategoryGridState extends State<CategoryGrid> {
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
     final crossAxisCount = screenWidth > 1200 ? 6 : (screenWidth > 800 ? 5 : 4);
-    final spacing = screenWidth > 1200
-        ? 24.0
-        : (screenWidth > 800 ? 20.0 : 16.0);
+    final spacing =
+        screenWidth > 1200 ? 24.0 : (screenWidth > 800 ? 20.0 : 16.0);
 
     return Padding(
       padding: const EdgeInsets.all(16.0),
@@ -59,12 +58,17 @@ class _CategoryGridState extends State<CategoryGrid> {
                   width: 56,
                   height: 56,
                   decoration: BoxDecoration(
-                    color: isSelected ? Colors.yellow[700] : Colors.grey[800],
+                    color: isSelected
+                        ? category.color
+                        : category.color.withOpacity(0.2),
                     shape: BoxShape.circle,
+                    border: isSelected
+                        ? Border.all(color: Colors.yellow[700]!, width: 2.5)
+                        : null,
                   ),
                   child: Icon(
                     category.icon,
-                    color: isSelected ? Colors.black : Colors.white,
+                    color: isSelected ? Colors.white : category.color,
                     size: 28,
                   ),
                 ),
@@ -78,9 +82,8 @@ class _CategoryGridState extends State<CategoryGrid> {
                     style: TextStyle(
                       color: isSelected ? Colors.yellow[700] : Colors.white,
                       fontSize: 12,
-                      fontWeight: isSelected
-                          ? FontWeight.bold
-                          : FontWeight.normal,
+                      fontWeight:
+                          isSelected ? FontWeight.bold : FontWeight.normal,
                     ),
                     textAlign: TextAlign.center,
                     maxLines: 2,

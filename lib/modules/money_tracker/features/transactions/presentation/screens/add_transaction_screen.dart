@@ -165,6 +165,7 @@ class _IncomeTab extends StatelessWidget {
             child: CalculatorSheet(
               category: category.label,
               categoryIcon: category.icon,
+              categoryColor: category.color,
               transactionType: type,
               onSubmit: (amount, note, date, accountId) async {
                 final transaction = MoneyTransaction(

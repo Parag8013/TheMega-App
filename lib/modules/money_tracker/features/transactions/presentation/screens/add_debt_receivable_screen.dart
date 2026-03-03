@@ -1,5 +1,6 @@
 // lib/features/transactions/presentation/screens/add_debt_receivable_screen.dart
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../../providers/debt_receivables_provider.dart';
@@ -20,59 +21,157 @@ class AddDebtReceivableScreen extends StatefulWidget {
 }
 
 class _AddDebtReceivableScreenState extends State<AddDebtReceivableScreen> {
-  String _type = 'receivable'; // Default to receivable
-  final TextEditingController _personNameController = TextEditingController();
-  final TextEditingController _noteController = TextEditingController();
+  String _type = 'receivable';
+  String _expression = '0';
   String _displayAmount = '0';
-  String _actualAmount = '0';
-  bool _hasDecimalPoint = false;
   DateTime _selectedDate = DateTime.now();
   String? _selectedCategory;
-  Account? _selectedAccount; // For receivables: which account money came from
+  Account? _selectedAccount;
+  final TextEditingController _personNameController = TextEditingController();
+  final TextEditingController _noteController = TextEditingController();
+  final FocusNode _keyboardFocusNode = FocusNode();
+  bool _noteFieldFocused = false;
+  bool _nameFieldFocused = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _keyboardFocusNode.requestFocus();
+    });
+  }
 
   @override
   void dispose() {
     _personNameController.dispose();
     _noteController.dispose();
+    _keyboardFocusNode.dispose();
     super.dispose();
   }
 
+  // --- Expression evaluation ---
+  double _evaluate(String expr) {
+    try {
+      expr = expr.replaceAll('×', '*').replaceAll('÷', '/');
+      expr = expr.replaceAllMapped(
+        RegExp(r'(\d+\.?\d*)%'),
+        (m) => '(${m.group(1)}/100)',
+      );
+      return _parseExpression(expr);
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  double _parseExpression(String expr) {
+    expr = expr.trim();
+    if (expr.isEmpty) return 0;
+    int parenDepth = 0;
+    int lastAddSub = -1;
+    for (int i = expr.length - 1; i >= 0; i--) {
+      if (expr[i] == ')') parenDepth++;
+      if (expr[i] == '(') parenDepth--;
+      if (parenDepth == 0 && (expr[i] == '+' || expr[i] == '-') && i > 0) {
+        lastAddSub = i;
+        break;
+      }
+    }
+    if (lastAddSub > 0) {
+      final left = _parseExpression(expr.substring(0, lastAddSub));
+      final op = expr[lastAddSub];
+      final right = _parseTerm(expr.substring(lastAddSub + 1));
+      return op == '+' ? left + right : left - right;
+    }
+    return _parseTerm(expr);
+  }
+
+  double _parseTerm(String expr) {
+    expr = expr.trim();
+    if (expr.isEmpty) return 0;
+    int parenDepth = 0;
+    int lastMulDiv = -1;
+    for (int i = expr.length - 1; i >= 0; i--) {
+      if (expr[i] == ')') parenDepth++;
+      if (expr[i] == '(') parenDepth--;
+      if (parenDepth == 0 && (expr[i] == '*' || expr[i] == '/') && i > 0) {
+        lastMulDiv = i;
+        break;
+      }
+    }
+    if (lastMulDiv > 0) {
+      final left = _parseTerm(expr.substring(0, lastMulDiv));
+      final op = expr[lastMulDiv];
+      final right = _parseFactor(expr.substring(lastMulDiv + 1));
+      if (op == '/') return right != 0 ? left / right : 0;
+      return left * right;
+    }
+    return _parseFactor(expr);
+  }
+
+  double _parseFactor(String expr) {
+    expr = expr.trim();
+    if (expr.startsWith('(') && expr.endsWith(')')) {
+      return _parseExpression(expr.substring(1, expr.length - 1));
+    }
+    return double.tryParse(expr) ?? 0;
+  }
+
+  // --- Input handlers ---
   void _addDigit(String digit) {
     setState(() {
-      if (_actualAmount == '0' && digit != '0') {
-        _actualAmount = digit;
-      } else if (_actualAmount != '0') {
-        _actualAmount += digit;
+      if (_expression == '0' && digit != '0') {
+        _expression = digit;
+      } else if (_expression == '0' && digit == '0') {
+        // Don't add leading zeros
+      } else {
+        _expression += digit;
       }
       _updateDisplay();
     });
   }
 
   void _addDecimalPoint() {
-    if (!_hasDecimalPoint) {
-      setState(() {
-        if (_actualAmount == '0') {
-          _actualAmount = '0.';
+    setState(() {
+      final lastSegment = _expression.split(RegExp(r'[+\-×÷]')).last;
+      if (!lastSegment.contains('.')) {
+        if (_expression == '0') {
+          _expression = '0.';
         } else {
-          _actualAmount += '.';
+          _expression += '.';
         }
-        _hasDecimalPoint = true;
         _updateDisplay();
-      });
-    }
+      }
+    });
+  }
+
+  void _addOperator(String op) {
+    setState(() {
+      final lastChar = _expression[_expression.length - 1];
+      if ('+-×÷'.contains(lastChar)) {
+        _expression = _expression.substring(0, _expression.length - 1) + op;
+      } else if (lastChar != '.') {
+        _expression += op;
+      }
+      _updateDisplay();
+    });
+  }
+
+  void _addPercent() {
+    setState(() {
+      final lastChar = _expression[_expression.length - 1];
+      if (!('+-×÷.%'.contains(lastChar)) && _expression != '0') {
+        _expression += '%';
+        _updateDisplay();
+      }
+    });
   }
 
   void _backspace() {
     setState(() {
-      if (_actualAmount.length > 1) {
-        final removedChar = _actualAmount[_actualAmount.length - 1];
-        if (removedChar == '.') {
-          _hasDecimalPoint = false;
-        }
-        _actualAmount = _actualAmount.substring(0, _actualAmount.length - 1);
+      if (_expression.length > 1) {
+        _expression = _expression.substring(0, _expression.length - 1);
       } else {
-        _actualAmount = '0';
-        _hasDecimalPoint = false;
+        _expression = '0';
       }
       _updateDisplay();
     });
@@ -80,15 +179,104 @@ class _AddDebtReceivableScreenState extends State<AddDebtReceivableScreen> {
 
   void _clear() {
     setState(() {
-      _actualAmount = '0';
+      _expression = '0';
       _displayAmount = '0';
-      _hasDecimalPoint = false;
     });
   }
 
   void _updateDisplay() {
-    final amount = double.tryParse(_actualAmount) ?? 0;
-    _displayAmount = CurrencyFormatter.format(amount);
+    final amount = _evaluate(_expression);
+    _displayAmount = CurrencyFormatter.format(amount.abs());
+  }
+
+  // --- Keyboard handler ---
+  KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent)
+      return KeyEventResult.ignored;
+    if (_noteFieldFocused || _nameFieldFocused) return KeyEventResult.ignored;
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.digit0 || key == LogicalKeyboardKey.numpad0) {
+      _addDigit('0');
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.digit1 || key == LogicalKeyboardKey.numpad1) {
+      _addDigit('1');
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.digit2 || key == LogicalKeyboardKey.numpad2) {
+      _addDigit('2');
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.digit3 || key == LogicalKeyboardKey.numpad3) {
+      _addDigit('3');
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.digit4 || key == LogicalKeyboardKey.numpad4) {
+      _addDigit('4');
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.digit5 || key == LogicalKeyboardKey.numpad5) {
+      _addDigit('5');
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.digit6 || key == LogicalKeyboardKey.numpad6) {
+      _addDigit('6');
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.digit7 || key == LogicalKeyboardKey.numpad7) {
+      _addDigit('7');
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.digit8 || key == LogicalKeyboardKey.numpad8) {
+      _addDigit('8');
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.digit9 || key == LogicalKeyboardKey.numpad9) {
+      _addDigit('9');
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.add || key == LogicalKeyboardKey.numpadAdd) {
+      _addOperator('+');
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.minus ||
+        key == LogicalKeyboardKey.numpadSubtract) {
+      _addOperator('-');
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.numpadMultiply ||
+        key == LogicalKeyboardKey.asterisk) {
+      _addOperator('×');
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.numpadDivide ||
+        key == LogicalKeyboardKey.slash) {
+      _addOperator('÷');
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.percent) {
+      _addPercent();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.period ||
+        key == LogicalKeyboardKey.numpadDecimal) {
+      _addDecimalPoint();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.backspace) {
+      _backspace();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.delete) {
+      _clear();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter) {
+      _submitDebtReceivable();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
   }
 
   void _selectDate() async {
@@ -128,7 +316,7 @@ class _AddDebtReceivableScreenState extends State<AddDebtReceivableScreen> {
       return;
     }
 
-    final amount = double.tryParse(_actualAmount) ?? 0;
+    final amount = _evaluate(_expression);
     if (amount <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -294,6 +482,14 @@ class _AddDebtReceivableScreenState extends State<AddDebtReceivableScreen> {
 
   @override
   Widget build(BuildContext context) {
+    return Focus(
+      focusNode: _keyboardFocusNode,
+      onKeyEvent: _handleKeyEvent,
+      child: _buildBody(context),
+    );
+  }
+
+  Widget _buildBody(BuildContext context) {
     final categoryProvider = context.watch<CategoryProvider>();
     final categories = _type == 'debt'
         ? categoryProvider.expenseCategories
@@ -347,30 +543,49 @@ class _AddDebtReceivableScreenState extends State<AddDebtReceivableScreen> {
             const SizedBox(height: 30),
 
             // Person name input
-            TextField(
-              controller: _personNameController,
-              style: const TextStyle(color: Colors.white, fontSize: 16),
-              decoration: InputDecoration(
-                labelText: _type == 'debt' ? 'I owe to' : 'Owes me',
-                labelStyle: TextStyle(color: Colors.grey[400]),
-                hintText: 'Enter person name',
-                hintStyle: TextStyle(color: Colors.grey[600]),
-                filled: true,
-                fillColor: Colors.grey[900],
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
+            Focus(
+              onFocusChange: (hasFocus) {
+                _nameFieldFocused = hasFocus;
+                if (!hasFocus) _keyboardFocusNode.requestFocus();
+              },
+              child: TextField(
+                controller: _personNameController,
+                style: const TextStyle(color: Colors.white, fontSize: 16),
+                decoration: InputDecoration(
+                  labelText: _type == 'debt' ? 'I owe to' : 'Owes me',
+                  labelStyle: TextStyle(color: Colors.grey[400]),
+                  hintText: 'Enter person name',
+                  hintStyle: TextStyle(color: Colors.grey[600]),
+                  filled: true,
+                  fillColor: Colors.grey[900],
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
+                  contentPadding: const EdgeInsets.all(16),
+                  prefixIcon: Icon(Icons.person, color: color),
                 ),
-                contentPadding: const EdgeInsets.all(16),
-                prefixIcon: Icon(Icons.person, color: color),
               ),
             ),
             const SizedBox(height: 20),
 
+            // Expression display
+            if (_expression.contains(RegExp(r'[+\-×÷%]')))
+              Container(
+                width: double.infinity,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+                child: Text(
+                  _expression,
+                  style: TextStyle(fontSize: 14, color: Colors.grey[400]),
+                  textAlign: TextAlign.right,
+                ),
+              ),
+
             // Amount display
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
               decoration: BoxDecoration(
                 color: Colors.grey[900],
                 borderRadius: BorderRadius.circular(12),
@@ -477,41 +692,45 @@ class _AddDebtReceivableScreenState extends State<AddDebtReceivableScreen> {
             if (_type == 'receivable') const SizedBox(height: 20),
 
             // Note input
-            TextField(
-              controller: _noteController,
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                hintText: 'Enter a note...',
-                hintStyle: TextStyle(color: Colors.grey[400]),
-                prefixIcon: Icon(Icons.note, color: Colors.grey[400]),
-                filled: true,
-                fillColor: Colors.grey[900],
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
+            Focus(
+              onFocusChange: (hasFocus) {
+                _noteFieldFocused = hasFocus;
+                if (!hasFocus) _keyboardFocusNode.requestFocus();
+              },
+              child: TextField(
+                controller: _noteController,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  hintText: 'Enter a note...',
+                  hintStyle: TextStyle(color: Colors.grey[400]),
+                  prefixIcon: Icon(Icons.note, color: Colors.grey[400]),
+                  filled: true,
+                  fillColor: Colors.grey[900],
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
                 ),
               ),
             ),
             const SizedBox(height: 20),
 
-            // Calculator buttons
+            // Calculator buttons - 5 columns with operations
             Column(
               children: [
-                // Row 1
+                // Row 1: 7 8 9 ÷ Date
                 Row(
                   children: [
                     _buildCalcButton(
-                      label: '7',
-                      onPressed: () => _addDigit('7'),
-                    ),
+                        label: '7', onPressed: () => _addDigit('7')),
                     _buildCalcButton(
-                      label: '8',
-                      onPressed: () => _addDigit('8'),
-                    ),
+                        label: '8', onPressed: () => _addDigit('8')),
                     _buildCalcButton(
-                      label: '9',
-                      onPressed: () => _addDigit('9'),
-                    ),
+                        label: '9', onPressed: () => _addDigit('9')),
+                    _buildCalcButton(
+                        label: '÷',
+                        onPressed: () => _addOperator('÷'),
+                        backgroundColor: Colors.blueGrey[700]),
                     _buildCalcButton(
                       label: DateFormat('dd MMM').format(_selectedDate),
                       onPressed: _selectDate,
@@ -520,72 +739,64 @@ class _AddDebtReceivableScreenState extends State<AddDebtReceivableScreen> {
                     ),
                   ],
                 ),
-                // Row 2
+                // Row 2: 4 5 6 × C
                 Row(
                   children: [
                     _buildCalcButton(
-                      label: '4',
-                      onPressed: () => _addDigit('4'),
-                    ),
+                        label: '4', onPressed: () => _addDigit('4')),
                     _buildCalcButton(
-                      label: '5',
-                      onPressed: () => _addDigit('5'),
-                    ),
+                        label: '5', onPressed: () => _addDigit('5')),
                     _buildCalcButton(
-                      label: '6',
-                      onPressed: () => _addDigit('6'),
-                    ),
+                        label: '6', onPressed: () => _addDigit('6')),
                     _buildCalcButton(
-                      label: 'C',
-                      onPressed: _clear,
-                      backgroundColor: Colors.orange[700],
-                    ),
+                        label: '×',
+                        onPressed: () => _addOperator('×'),
+                        backgroundColor: Colors.blueGrey[700]),
+                    _buildCalcButton(
+                        label: 'C',
+                        onPressed: _clear,
+                        backgroundColor: Colors.orange[700]),
                   ],
                 ),
-                // Row 3
+                // Row 3: 1 2 3 - ⌫
                 Row(
                   children: [
                     _buildCalcButton(
-                      label: '1',
-                      onPressed: () => _addDigit('1'),
-                    ),
+                        label: '1', onPressed: () => _addDigit('1')),
                     _buildCalcButton(
-                      label: '2',
-                      onPressed: () => _addDigit('2'),
-                    ),
+                        label: '2', onPressed: () => _addDigit('2')),
                     _buildCalcButton(
-                      label: '3',
-                      onPressed: () => _addDigit('3'),
-                    ),
+                        label: '3', onPressed: () => _addDigit('3')),
                     _buildCalcButton(
-                      label: '',
-                      icon: Icons.backspace,
-                      onPressed: _backspace,
-                      backgroundColor: Colors.red[700],
-                    ),
+                        label: '-',
+                        onPressed: () => _addOperator('-'),
+                        backgroundColor: Colors.blueGrey[700]),
+                    _buildCalcButton(
+                        label: '',
+                        icon: Icons.backspace,
+                        onPressed: _backspace,
+                        backgroundColor: Colors.red[700]),
                   ],
                 ),
-                // Row 4
+                // Row 4: . 0 % + ✓
                 Row(
                   children: [
                     _buildCalcButton(label: '.', onPressed: _addDecimalPoint),
                     _buildCalcButton(
-                      label: '0',
-                      onPressed: () => _addDigit('0'),
-                    ),
+                        label: '0', onPressed: () => _addDigit('0')),
                     _buildCalcButton(
-                      label: '00',
-                      onPressed: () {
-                        _addDigit('0');
-                        _addDigit('0');
-                      },
-                    ),
+                        label: '%',
+                        onPressed: _addPercent,
+                        backgroundColor: Colors.blueGrey[700]),
                     _buildCalcButton(
-                      label: '',
-                      icon: Icons.check,
-                      onPressed: _submitDebtReceivable,
-                      backgroundColor: Colors.green[700],
-                    ),
+                        label: '+',
+                        onPressed: () => _addOperator('+'),
+                        backgroundColor: Colors.blueGrey[700]),
+                    _buildCalcButton(
+                        label: '',
+                        icon: Icons.check,
+                        onPressed: _submitDebtReceivable,
+                        backgroundColor: Colors.green[700]),
                   ],
                 ),
               ],

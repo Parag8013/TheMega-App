@@ -505,28 +505,30 @@ class DatabaseHelper {
       );
 
       // Reverse the balance change in the account
-      final accountMaps = await txn.query(
-        'accounts',
-        where: 'id = ?',
-        whereArgs: [transaction.accountId],
-      );
-
-      if (accountMaps.isNotEmpty) {
-        final currentBalance = accountMaps.first['current_balance'] as double;
-        final balanceChange =
-            (transaction.type == 'expense' || transaction.type == 'receivable')
-                ? transaction.amount // Add back expense/receivable amount
-                : -transaction.amount; // Subtract income amount
-
-        await txn.update(
+      // Skip for receivable — deleting the record shouldn't return the money
+      if (transaction.type != 'receivable') {
+        final accountMaps = await txn.query(
           'accounts',
-          {
-            'current_balance': currentBalance + balanceChange,
-            'updated_at': DateTime.now().toUtc().toIso8601String(),
-          },
           where: 'id = ?',
           whereArgs: [transaction.accountId],
         );
+
+        if (accountMaps.isNotEmpty) {
+          final currentBalance = accountMaps.first['current_balance'] as double;
+          final balanceChange = transaction.type == 'expense'
+              ? transaction.amount // Add back expense amount
+              : -transaction.amount; // Subtract income amount
+
+          await txn.update(
+            'accounts',
+            {
+              'current_balance': currentBalance + balanceChange,
+              'updated_at': DateTime.now().toUtc().toIso8601String(),
+            },
+            where: 'id = ?',
+            whereArgs: [transaction.accountId],
+          );
+        }
       }
     });
   }
